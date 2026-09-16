@@ -1,21 +1,12 @@
 import { z } from 'zod'
+import type { VerificationOutcome } from './mocks/verification'
 
 export const verificationRequestSchema = z.object({
   opportunityId: z.string().trim().min(1),
-  accountId: z.string().trim().min(1).optional(),
 })
 
-export const bavRequestSchema = verificationRequestSchema.extend({
-  bankName: z.string().trim().min(1),
-  accountHolder: z.string().trim().min(1),
-  accountNumber: z.string().trim().min(1),
-  branchCode: z.string().trim().min(1),
-})
-
-export const kycRequestSchema = verificationRequestSchema.extend({
-  identityDocument: z.string().trim().min(1),
-  proofOfAddress: z.string().trim().min(1),
-})
+export const bavRequestSchema = verificationRequestSchema
+export const kycRequestSchema = verificationRequestSchema
 
 export type VerificationResponse = {
   status: 'VERIFIED'
@@ -49,4 +40,24 @@ export function verificationResponse(
   prefix: 'BAV' | 'KYC',
 ): VerificationResponse {
   return { status: 'VERIFIED', reference: `${prefix}-${crypto.randomUUID()}` }
+}
+
+export function verificationOutcomeResponse(
+  prefix: 'BAV' | 'KYC',
+  outcome: VerificationOutcome,
+): Response {
+  switch (outcome.status) {
+    case 'VERIFIED':
+      return Response.json(verificationResponse(prefix))
+    case 'REJECTED':
+      return Response.json(
+        { status: 'REJECTED', reason: outcome.reason },
+        { status: 422 },
+      )
+    case 'ERROR':
+      return Response.json(
+        { error: outcome.message },
+        { status: outcome.httpStatus },
+      )
+  }
 }

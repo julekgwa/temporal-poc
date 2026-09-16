@@ -1,8 +1,27 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import {
+  BAV_STAGE,
+  createOpportunity,
+  KYC_STAGE,
+  ONBOARDING_STAGE,
+  updateOpportunityStage,
+} from './twenty/opportunities'
+import { verificationRequestSchema } from './onboarding-api'
 import { createAccount } from './twenty/accounts'
-import { createOpportunity, ONBOARDING_STAGE } from './twenty/opportunities'
 import { createPerson } from './twenty/people'
+
+const bavStageRequestSchema = verificationRequestSchema.extend({
+  accountId: z.string().trim().min(1).optional(),
+  bankName: z.string().trim().min(1),
+  accountHolder: z.string().trim().min(1),
+  accountNumber: z.string().trim().min(1),
+  branchCode: z.string().trim().min(1),
+})
+
+const kycStageRequestSchema = verificationRequestSchema.extend({
+  idNumber: z.string().trim().min(1),
+})
 
 export const onboardingDetailsSchema = z.object({
   companyName: z.string().trim().min(2, 'Enter the company name.'),
@@ -57,4 +76,25 @@ export const createOnboardingFn = createServerFn({ method: 'POST' })
       opportunityId: opportunity.id,
       stage: opportunity.stage || ONBOARDING_STAGE,
     }
+  })
+
+export const updateBavStageFn = createServerFn({ method: 'POST' })
+  .validator(bavStageRequestSchema)
+  .handler(async ({ data }) => {
+    await updateOpportunityStage(data.opportunityId, BAV_STAGE, {
+      bankName: data.bankName,
+      accountHolder: data.accountHolder,
+      accountNumber: data.accountNumber,
+      branchCode: data.branchCode,
+    })
+    return { stage: BAV_STAGE }
+  })
+
+export const updateKycStageFn = createServerFn({ method: 'POST' })
+  .validator(kycStageRequestSchema)
+  .handler(async ({ data }) => {
+    await updateOpportunityStage(data.opportunityId, KYC_STAGE, {
+      idNumber: data.idNumber,
+    })
+    return { stage: KYC_STAGE }
   })

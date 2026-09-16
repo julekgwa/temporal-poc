@@ -12,7 +12,8 @@ const config = defineConfig({
   resolve: { tsconfigPaths: true },
   server: {
     port: 8080,
-    open: true
+    open: true,
+    allowedHosts: ['sporophyllary-tetragonal-berenice.ngrok-free.dev']
   },
   plugins: [
     devtools(),

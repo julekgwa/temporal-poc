@@ -3,13 +3,15 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useServerFn } from '@tanstack/react-start'
-import ky from 'ky'
+import { toast } from 'sonner'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import {
   createOnboardingFn,
   onboardingDetailsSchema,
+  updateBavStageFn,
+  updateKycStageFn,
 } from '../server/onboarding.functions'
 import type { OnboardingDetails } from '../server/onboarding.functions'
 
@@ -26,8 +28,16 @@ const personFields = [
 
 function Home() {
   const createOnboarding = useServerFn(createOnboardingFn)
+  const updateBavStage = useServerFn(updateBavStageFn)
+  const updateKycStage = useServerFn(updateKycStageFn)
   const createMutation = useMutation({
     mutationFn: (data: OnboardingDetails) => createOnboarding({ data }),
+    onError: (error) =>
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'We could not start your onboarding. Please try again.',
+      ),
   })
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [completed, setCompleted] = useState(false)
@@ -45,11 +55,7 @@ function Home() {
     accountNumber: '',
     branchCode: '',
   })
-  const [kycDocuments, setKycDocuments] = useState<{
-    identity: File | null
-    address: File | null
-  }>({ identity: null, address: null })
-  const [verificationError, setVerificationError] = useState('')
+  const [idNumber, setIdNumber] = useState('')
   const [errors, setErrors] = useState<
     Partial<Record<keyof OnboardingDetails, string>>
   >({})
@@ -60,11 +66,9 @@ function Home() {
   }
   function updateBankField(field: keyof typeof bankDetails, value: string) {
     setBankDetails((current) => ({ ...current, [field]: value }))
-    setVerificationError('')
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setVerificationError('')
 
     if (step === 1) {
       const result = onboardingDetailsSchema.safeParse(form)
@@ -84,48 +88,46 @@ function Home() {
 
     if (step === 2) {
       if (Object.values(bankDetails).some((value) => !value.trim())) {
-        setVerificationError('Complete all banking details to continue.')
+        toast.error('Complete all banking details to continue.')
         return
       }
       try {
-        await ky
-          .post('/api/bav', {
-            json: {
-              ...bankDetails,
-              opportunityId: createMutation.data?.opportunityId,
-              accountId: createMutation.data?.accountId,
-            },
-          })
-          .json()
+        await updateBavStage({
+          data: {
+            ...bankDetails,
+            opportunityId: createMutation.data?.opportunityId || '',
+            accountId: createMutation.data?.accountId,
+          },
+        })
         setStep(3)
-      } catch {
-        setVerificationError(
-          'We could not verify your banking details. Please try again.',
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'We could not save your banking details. Please try again.',
         )
       }
       return
     }
 
-    if (!kycDocuments.identity || !kycDocuments.address) {
-      setVerificationError(
-        'Upload your identity document and proof of address.',
-      )
+    if (!idNumber.trim()) {
+      toast.error('Enter your South African ID number.')
       return
     }
     try {
-      await ky
-        .post('/api/kyc', {
-          json: {
-            opportunityId: createMutation.data?.opportunityId,
-            identityDocument: kycDocuments.identity.name,
-            proofOfAddress: kycDocuments.address.name,
-          },
-        })
-        .json()
+      await updateKycStage({
+        data: {
+          opportunityId: createMutation.data?.opportunityId || '',
+          idNumber,
+        },
+      })
       setCompleted(true)
-    } catch {
-      setVerificationError(
-        'We could not submit your KYC documents. Please try again.',
+      toast.success('Onboarding submitted successfully.')
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'We could not save your KYC details. Please try again.',
       )
     }
   }
@@ -205,7 +207,7 @@ function Home() {
               </p>
               <p className="mt-2 text-2xl font-bold">Congratulations!</p>
               <p className="mt-3 text-sm leading-6 text-[var(--sea-ink-soft)]">
-                Your details, banking information, and KYC documents have been
+                Your details, banking information, and KYC information have been
                 submitted successfully.
               </p>
               <dl className="mt-4 space-y-2 text-sm">
@@ -261,7 +263,7 @@ function Home() {
                     ? 'Your details'
                     : step === 2
                       ? 'Banking details'
-                      : 'KYC documents'}
+                      : 'KYC details'}
                 </h2>
               </div>
               {step === 1 && (
@@ -369,9 +371,6 @@ function Home() {
                       />
                     </div>
                   ))}
-                  {verificationError && (
-                    <p className="text-sm text-red-700">{verificationError}</p>
-                  )}
                   <div className="flex gap-3">
                     <Button
                       type="button"
@@ -393,35 +392,23 @@ function Home() {
               {step === 3 && (
                 <>
                   <p className="text-sm leading-6 text-[var(--sea-ink-soft)]">
-                    Upload one identity document and a recent proof of address.
-                    Accepted formats: PDF, JPG, or PNG.
+                    Enter your South African identity number to complete KYC.
                   </p>
-                  {(['identity', 'address'] as const).map((field) => (
-                    <div key={field}>
-                      <Label
-                        htmlFor={field}
-                        className="mb-2 text-[var(--sea-ink)]"
-                      >
-                        {field === 'identity'
-                          ? 'Identity document'
-                          : 'Proof of address'}
-                      </Label>
-                      <Input
-                        id={field}
-                        type="file"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={(event) =>
-                          setKycDocuments((current) => ({
-                            ...current,
-                            [field]: event.target.files?.[0] || null,
-                          }))
-                        }
-                      />
-                    </div>
-                  ))}
-                  {verificationError && (
-                    <p className="text-sm text-red-700">{verificationError}</p>
-                  )}
+                  <div>
+                    <Label
+                      htmlFor="idNumber"
+                      className="mb-2 text-[var(--sea-ink)]"
+                    >
+                      South African ID number
+                    </Label>
+                    <Input
+                      id="idNumber"
+                      inputMode="numeric"
+                      value={idNumber}
+                      placeholder="8001015009087"
+                      onChange={(event) => setIdNumber(event.target.value)}
+                    />
+                  </div>
                   <div className="flex gap-3">
                     <Button
                       type="button"
@@ -436,7 +423,7 @@ function Home() {
                       className="h-11 flex-1 rounded-xl bg-[var(--sea-ink)] hover:bg-[var(--lagoon-deep)]"
                       disabled={createMutation.isPending}
                     >
-                      Submit KYC documents
+                      Submit KYC details
                     </Button>
                   </div>
                 </>

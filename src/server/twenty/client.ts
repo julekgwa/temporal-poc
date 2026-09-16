@@ -43,14 +43,17 @@ export async function twentyRequest<T>(
   const { baseUrl, apiKey } = getTwentyConfig()
 
   try {
-    return await ky(`${baseUrl}${path}`, {
+    const response = await ky(`${baseUrl}${path}`, {
       ...init,
       retry: 0,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         ...init.headers,
       },
-    }).json<T>()
+    })
+
+    if (response.status === 204) return {} as T
+    return await response.json<T>()
   } catch (error) {
     if (error instanceof HTTPError) {
       const details = error.data
