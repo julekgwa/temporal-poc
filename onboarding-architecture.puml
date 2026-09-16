@@ -1,0 +1,93 @@
+@startuml
+title Onboarding - Twenty + Temporal
+
+actor Customer
+
+participant "TanStack Start\nOnboarding App" as App
+participant "Twenty CRM" as Twenty
+participant "Temporal API" as TAPI
+participant "Temporal\nOnboarding Workflow" as Temporal
+participant "BAV Activity" as BAV
+participant "Banking API" as Bank
+participant "KYC Activity" as KYC
+participant "KYC Provider" as KycProvider
+participant "BIND Activity" as Bind
+participant "BIND API" as BindApi
+
+== Your Details ==
+
+Customer -> App: Submit onboarding details
+App -> Twenty: Create Company
+App -> Twenty: Create Person
+App -> Twenty: Create Opportunity
+App -> TAPI: Start Onboarding Workflow
+TAPI -> Temporal: Start workflow\nworkflowId = onboarding:{opportunityId}
+
+== BAV ==
+
+Customer -> App: Submit bank details
+App -> Twenty: Update Opportunity\nStage = BAV
+
+Twenty -> TAPI: HTTP POST /temporal/onboarding/{id}/bav
+TAPI -> Temporal: Signal bavRequested
+
+Temporal -> BAV: verifyBav(opportunityId)
+BAV -> Twenty: Read Opportunity / bank details
+BAV -> Bank: Verify bank account
+Bank --> BAV: VERIFIED / FAILED / PENDING
+BAV --> Temporal: BavResult
+
+Temporal -> Twenty: Update BAV status/reference
+
+alt BAV VERIFIED
+    Temporal -> Twenty: Update Stage = KYC
+else BAV FAILED
+    Temporal -> Twenty: BAV Status = FAILED
+else BAV PENDING
+    Temporal -> Twenty: BAV Status = PENDING
+end
+
+== KYC ==
+
+Twenty -> TAPI: HTTP POST /temporal/onboarding/{id}/kyc
+TAPI -> Temporal: Signal kycRequested
+
+Temporal -> KYC: verifyKyc(opportunityId)
+KYC -> Twenty: Read Opportunity / Person details
+KYC -> KycProvider: Verify identity
+KycProvider --> KYC: VERIFIED / FAILED / PENDING
+KYC --> Temporal: KycResult
+
+Temporal -> Twenty: Update KYC status/reference
+
+alt KYC VERIFIED
+    Temporal -> Twenty: Update Stage = Approval
+else KYC FAILED
+    Temporal -> Twenty: KYC Status = FAILED
+else KYC PENDING
+    Temporal -> Twenty: KYC Status = PENDING
+end
+
+== Approval ==
+
+Customer -> App: Complete approval process
+App -> Twenty: Update Opportunity
+
+alt Closed Lost
+    Twenty -> TAPI: HTTP POST /outcome
+    TAPI -> Temporal: Signal outcomeChanged(CLOSED_LOST)
+    Temporal -> Temporal: Complete workflow
+else Closed Won
+    Twenty -> TAPI: HTTP POST /outcome
+    TAPI -> Temporal: Signal outcomeChanged(CLOSED_WON)
+
+    Temporal -> Bind: executeBind(opportunityId)
+    Bind -> BindApi: Execute BIND
+    BindApi --> Bind: Success / Failure
+    Bind --> Temporal: BindResult
+
+    Temporal -> Twenty: Update BIND status/reference
+    Temporal -> Temporal: Complete workflow
+end
+
+@enduml

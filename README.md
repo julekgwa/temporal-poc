@@ -1,223 +1,737 @@
-Welcome to your new TanStack Start app!
+# Onboarding Workflow — Twenty + Temporal
 
-# Getting Started
+## Overview
 
-To run this application:
+This POC uses **Twenty** as the CRM and application state store, while **Temporal** owns the long-running onboarding orchestration.
 
-```bash
-bun install
-bun --bun run dev
+The onboarding process is:
+
+```text
+Your Details → BAV → KYC → Approval → Closed Won / Closed Lost
 ```
 
-# Building For Production
+External systems such as banking and KYC providers are called from **Temporal Activities**.
 
-To build this application for production:
+The core principle is:
 
-```bash
-bun --bun run build
+```text
+Twenty       = CRM / application state
+Temporal     = workflow orchestration
+External APIs = verification / execution
 ```
 
-## Styling
+---
 
-This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
+## Architecture
 
-### Removing Tailwind CSS
-
-If you prefer not to use Tailwind CSS:
-
-1. Remove the demo pages in `src/routes/demo/`
-2. Replace the Tailwind import in `src/styles.css` with your own styles
-3. Remove `tailwindcss()` from the plugins array in `vite.config.ts`
-4. Remove `@tailwindcss/vite` and `tailwindcss` from `package.json`
-
-## Linting & Formatting
-
-
-This project uses [eslint](https://eslint.org/) and [prettier](https://prettier.io/) for linting and formatting. Eslint is configured using [tanstack/eslint-config](https://tanstack.com/config/latest/docs/eslint). The following scripts are available:
-
-```bash
-bun --bun run lint
-bun --bun run format
-bun --bun run check
+```text
+                         ┌──────────────────────┐
+                         │        Twenty        │
+                         │     Opportunity      │
+                         └──────────┬───────────┘
+                                    │
+                           Stage changes
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ Twenty Workflow      │
+                         │ HTTP Request         │
+                         └──────────┬───────────┘
+                                    │
+                                  HTTP
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │    Temporal API      │
+                         │                      │
+                         │ signalWorkflow()     │
+                         └──────────┬───────────┘
+                                    │
+                                  Signal
+                                    │
+                                    ▼
+                    ┌─────────────────────────────┐
+                    │      Temporal Workflow      │
+                    │                             │
+                    │    OnboardingWorkflow       │
+                    └─────────────┬───────────────┘
+                                  │
+                   ┌──────────────┼──────────────┐
+                   │              │              │
+                   ▼              ▼              ▼
+             BAV Activity    KYC Activity    BIND Activity
+                   │              │              │
+                   ▼              ▼              ▼
+               Bank API        KYC API        Bind API
+                   │              │              │
+                   └──────────────┼──────────────┘
+                                  │
+                                  ▼
+                             Update Twenty
 ```
 
+---
 
-## Deploy to Cloudflare Workers
+# 1. Twenty
 
-This project uses the Cloudflare Vite plugin (configured in `vite.config.ts`) and `wrangler.jsonc`:
+Twenty represents the CRM and application state.
 
-1. Install Wrangler: `npm install -g wrangler`
-2. Authenticate: `wrangler login`
-3. Deploy: `npx wrangler deploy`
+An **Opportunity represents one onboarding application**.
 
-For production env vars, run `wrangler secret put MY_VAR` for each secret listed in `.env.example`. Public (non-secret) vars go in `wrangler.jsonc` under `vars`.
+Recommended Opportunity fields:
 
-KV, D1, R2, and Durable Object bindings are configured in `wrangler.jsonc` — see https://developers.cloudflare.com/workers/wrangler/configuration/.
-
-
-## Setting up Convex
-
-- Set the `VITE_CONVEX_URL` and `CONVEX_DEPLOYMENT` environment variables in your `.env.local`. (Or run `bunx --bun convex init` to set them automatically.)
-- Run `bunx --bun convex dev` to start the Convex server.
-
-
-## Shadcn
-
-Add components using the latest version of [Shadcn](https://ui.shadcn.com/).
-
-```bash
-pnpm dlx shadcn@latest add button
+```text
+Opportunity
+├── Name
+├── Company
+├── Person
+├── Stage
+│   ├── Your Details
+│   ├── BAV
+│   ├── KYC
+│   ├── Approval
+│   ├── Closed Won
+│   └── Closed Lost
+│
+├── BAV Status
+├── BAV Reference
+├── BAV Failure Reason
+│
+├── KYC Status
+├── KYC Reference
+├── KYC Failure Reason
+│
+├── Bank Name
+├── Bank Account Number
+├── Bank Branch Code
+└── Bank Account Holder
 ```
 
+For a production implementation, sensitive banking and identity information should preferably be stored outside Twenty in a secure data store. Twenty should contain the relevant status and provider references.
 
+---
 
-## Routing
+# 2. Starting the Temporal Workflow
 
-This project uses [TanStack Router](https://tanstack.com/router) with file-based routing. Routes are managed as files in `src/routes`.
+When the onboarding application is created:
 
-### Adding A Route
-
-To add a new route to your application just add a new file in the `./src/routes` directory.
-
-TanStack will automatically generate the content of the route file for you.
-
-Now that you have two routes you can use a `Link` component to navigate between them.
-
-### Adding Links
-
-To use SPA (Single Page Application) navigation you will need to import the `Link` component from `@tanstack/react-router`.
-
-```tsx
-import { Link } from "@tanstack/react-router";
+```text
+Your Details
+    │
+    ├── Create Company
+    ├── Create Person
+    └── Create Opportunity
+              │
+              ▼
+       Start Temporal Workflow
 ```
 
-Then anywhere in your JSX you can use it like so:
+Use one Temporal Workflow per Opportunity.
 
-```tsx
-<Link to="/about">About</Link>
+The Workflow ID should be deterministic:
+
+```text
+onboarding:{opportunityId}
 ```
 
-This will create a link that will navigate to the `/about` route.
+Example:
 
-More information on the `Link` component can be found in the [Link documentation](https://tanstack.com/router/v1/docs/framework/react/api/router/linkComponent).
-
-### Using A Layout
-
-In the File Based Routing setup the layout is located in `src/routes/__root.tsx`. Anything you add to the root route will appear in all the routes. The route content will appear in the JSX where you render `{children}` in the `shellComponent`.
-
-Here is an example layout that includes a header:
-
-```tsx
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
-
-export const Route = createRootRoute({
-  head: () => ({
-    meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'My App' },
-    ],
-  }),
-  shellComponent: ({ children }) => (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <header>
-          <nav>
-            <Link to="/">Home</Link>
-            <Link to="/about">About</Link>
-          </nav>
-        </header>
-        {children}
-        <Scripts />
-      </body>
-    </html>
-  ),
-})
+```text
+onboarding:e0f261c8-f4ff-4e57-93eb-1e38d4d43faa
 ```
 
-More information on layouts can be found in the [Layouts documentation](https://tanstack.com/router/latest/docs/framework/react/guide/routing-concepts#layouts).
+Example:
 
-## Server Functions
-
-TanStack Start provides server functions that allow you to write server-side code that seamlessly integrates with your client components.
-
-```tsx
-import { createServerFn } from '@tanstack/react-start'
-
-const getServerTime = createServerFn({
-  method: 'GET',
-}).handler(async () => {
-  return new Date().toISOString()
-})
-
-// Use in a component
-function MyComponent() {
-  const [time, setTime] = useState('')
-  
-  useEffect(() => {
-    getServerTime().then(setTime)
-  }, [])
-  
-  return <div>Server time: {time}</div>
-}
-```
-
-## API Routes
-
-You can create API routes by using the `server` property in your route definitions:
-
-```tsx
-import { createFileRoute } from '@tanstack/react-router'
-import { json } from '@tanstack/react-start'
-
-export const Route = createFileRoute('/api/hello')({
-  server: {
-    handlers: {
-      GET: () => json({ message: 'Hello, World!' }),
+```ts
+await temporalClient.workflow.start(onboardingWorkflow, {
+  workflowId: `onboarding:${opportunityId}`,
+  taskQueue: "onboarding",
+  args: [
+    {
+      opportunityId,
+      companyId,
+      personId,
     },
-  },
-})
+  ],
+});
 ```
 
-## Data Fetching
+This makes the Twenty Opportunity and Temporal Workflow easy to correlate.
 
-There are multiple ways to fetch data in your application. You can use TanStack Query to fetch data from a server. But you can also use the `loader` functionality built into TanStack Router to load the data for a route before it's rendered.
+---
+
+# 3. Temporal Workflow
+
+There should be **one long-running onboarding Workflow**, rather than separate workflows for BAV, KYC, and BIND.
+
+Conceptually:
+
+```text
+OnboardingWorkflow
+│
+├── wait for BAV signal
+│       │
+│       └── verifyBav Activity
+│
+├── wait for KYC signal
+│       │
+│       └── verifyKyc Activity
+│
+├── wait for outcome signal
+│       │
+│       ├── Closed Won
+│       │       │
+│       │       └── bind Activity
+│       │
+│       └── Closed Lost
+│
+└── complete
+```
+
+This allows the Workflow to remain alive for hours or days while waiting for the next stage.
+
+---
+
+# 4. Temporal Signals
+
+Signals are used to tell the running Workflow that something happened externally.
+
+Recommended signals:
+
+```ts
+const bavRequested = defineSignal<[BavSignal]>("bavRequested");
+
+const kycRequested = defineSignal<[KycSignal]>("kycRequested");
+
+const outcomeChanged =
+  defineSignal<[OutcomeSignal]>("outcomeChanged");
+```
+
+Example payloads:
+
+```ts
+type BavSignal = {
+  opportunityId: string;
+};
+
+type KycSignal = {
+  opportunityId: string;
+};
+
+type OutcomeSignal = {
+  opportunityId: string;
+  outcome: "CLOSED_WON" | "CLOSED_LOST";
+};
+```
+
+---
+
+# 5. Twenty → Temporal
+
+Twenty cannot directly execute a Temporal signal inside the Temporal Worker.
+
+Instead, expose a small server/API endpoint.
 
 For example:
 
-```tsx
-import { createFileRoute } from '@tanstack/react-router'
+```text
+POST /temporal/onboarding/:opportunityId/bav
+POST /temporal/onboarding/:opportunityId/kyc
+POST /temporal/onboarding/:opportunityId/outcome
+```
 
-export const Route = createFileRoute('/people')({
-  loader: async () => {
-    const response = await fetch('https://swapi.dev/api/people')
-    return response.json()
+The API uses the Temporal SDK:
+
+```ts
+await temporalClient.workflow.signal(
+  `onboarding:${opportunityId}`,
+  "bavRequested",
+  {
+    opportunityId,
   },
-  component: PeopleComponent,
-})
+);
+```
 
-function PeopleComponent() {
-  const data = Route.useLoaderData()
-  return (
-    <ul>
-      {data.results.map((person) => (
-        <li key={person.name}>{person.name}</li>
-      ))}
-    </ul>
-  )
+The flow is:
+
+```text
+Twenty
+   │
+   │ HTTP
+   ▼
+Temporal API
+   │
+   │ workflow.signal()
+   ▼
+Temporal Workflow
+```
+
+---
+
+# 6. BAV Flow
+
+When the Opportunity reaches BAV:
+
+```text
+Twenty Opportunity
+        │
+        │ Stage = BAV
+        ▼
+Twenty Workflow
+        │
+        │ HTTP POST
+        ▼
+Temporal API
+        │
+        │ Signal
+        ▼
+OnboardingWorkflow
+        │
+        ▼
+verifyBav Activity
+        │
+        ▼
+Banking API
+```
+
+The Activity performs the actual external API call.
+
+Example:
+
+```ts
+export async function verifyBav(opportunityId: string) {
+  const opportunity =
+    await twenty.getOpportunity(opportunityId);
+
+  return bavProvider.verify({
+    accountNumber: opportunity.bankAccountNumber,
+    branchCode: opportunity.bankBranchCode,
+    accountHolderName: opportunity.bankAccountHolder,
+  });
 }
 ```
 
-Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
+The Workflow should **not** directly call the banking API.
 
+Do this:
 
+```ts
+// Workflow
 
-# Learn More
+const result = await activities.verifyBav(opportunityId);
+```
 
-You can learn more about all of the offerings from TanStack in the [TanStack documentation](https://tanstack.com).
+Not this:
 
-For TanStack Start specific documentation, visit [TanStack Start](https://tanstack.com/start).
-# temporal-poc
+```ts
+// ❌ Do not call external APIs directly from Workflow
+
+await fetch("https://bank.example.com/verify");
+```
+
+External I/O belongs in Activities.
+
+---
+
+# 7. BAV Result
+
+The BAV provider should return a normalized result:
+
+```json
+{
+  "status": "VERIFIED",
+  "reference": "BAV-123456"
+}
+```
+
+or:
+
+```json
+{
+  "status": "FAILED",
+  "reference": "BAV-123456",
+  "reason": "Account details could not be verified"
+}
+```
+
+or:
+
+```json
+{
+  "status": "PENDING",
+  "reference": "BAV-123456"
+}
+```
+
+Temporal then updates Twenty:
+
+```text
+BAV Activity
+    │
+    ▼
+Bank API
+    │
+    ▼
+BAV result
+    │
+    ▼
+Temporal
+    │
+    ▼
+Update Twenty Opportunity
+```
+
+For example:
+
+```text
+BAV Status = VERIFIED
+BAV Reference = BAV-123456
+```
+
+If the application should proceed:
+
+```text
+Stage = KYC
+```
+
+---
+
+# 8. KYC Flow
+
+Once Twenty moves the Opportunity to KYC:
+
+```text
+Twenty
+  │
+  │ Stage = KYC
+  ▼
+Twenty Workflow
+  │
+  │ HTTP
+  ▼
+Temporal API
+  │
+  │ Signal
+  ▼
+OnboardingWorkflow
+  │
+  ▼
+verifyKyc Activity
+  │
+  ▼
+KYC Provider
+```
+
+The KYC Activity follows the same pattern:
+
+```ts
+export async function verifyKyc(opportunityId: string) {
+  const opportunity =
+    await twenty.getOpportunity(opportunityId);
+
+  return kycProvider.verify({
+    opportunityId,
+    personId: opportunity.personId,
+  });
+}
+```
+
+The result is then written back to Twenty:
+
+```text
+KYC Status
+KYC Reference
+KYC Failure Reason
+```
+
+---
+
+# 9. Closed Won / Closed Lost
+
+When the application reaches the final outcome:
+
+```text
+Twenty Opportunity
+       │
+       ├── Closed Lost
+       │
+       └── Closed Won
+```
+
+Twenty signals Temporal:
+
+```http
+POST /temporal/onboarding/:opportunityId/outcome
+```
+
+Payload:
+
+```json
+{
+  "outcome": "CLOSED_WON"
+}
+```
+
+Temporal receives:
+
+```ts
+await temporalClient.workflow.signal(
+  `onboarding:${opportunityId}`,
+  "outcomeChanged",
+  {
+    opportunityId,
+    outcome: "CLOSED_WON",
+  },
+);
+```
+
+---
+
+# 10. BIND
+
+If the outcome is `CLOSED_WON`, Temporal executes the BIND Activity:
+
+```text
+Closed Won
+    │
+    ▼
+Temporal Signal
+    │
+    ▼
+OnboardingWorkflow
+    │
+    ▼
+BIND Activity
+    │
+    ▼
+Binding API
+```
+
+Example:
+
+```ts
+if (outcome === "CLOSED_WON") {
+  await activities.executeBind(opportunityId);
+}
+```
+
+The BIND operation should be idempotent.
+
+Use an idempotency key such as:
+
+```text
+onboarding:{opportunityId}:bind
+```
+
+This is important because Temporal Activities can be retried.
+
+A retry must not accidentally create two bindings.
+
+---
+
+# 11. Why Activities?
+
+Activities provide the boundary between deterministic workflow orchestration and external side effects.
+
+Activities are responsible for:
+
+- HTTP calls
+- Database calls
+- Twenty API calls
+- Banking API calls
+- KYC API calls
+- BIND API calls
+- Other external integrations
+
+Temporal provides:
+
+- Retries
+- Timeouts
+- Durable state
+- Failure recovery
+- Long-running execution
+- Workflow history
+- Signals
+- Queries
+- Observability
+
+---
+
+# 12. Recommended Service Structure
+
+A simple implementation could look like:
+
+```text
+src/
+├── temporal/
+│   ├── client.ts
+│   ├── worker.ts
+│   │
+│   ├── workflows/
+│   │   └── onboarding.ts
+│   │
+│   ├── activities/
+│   │   ├── bav.ts
+│   │   ├── kyc.ts
+│   │   ├── bind.ts
+│   │   └── twenty.ts
+│   │
+│   └── signals/
+│       └── onboarding.ts
+│
+├── routes/
+│   └── temporal/
+│       └── onboarding/
+│           ├── bav.ts
+│           ├── kyc.ts
+│           └── outcome.ts
+│
+└── integrations/
+    ├── bav/
+    │   └── provider.ts
+    ├── kyc/
+    │   └── provider.ts
+    └── bind/
+        └── provider.ts
+```
+
+Keep the provider interfaces small:
+
+```ts
+interface BavProvider {
+  verify(input: BavInput): Promise<BavResult>;
+}
+
+interface KycProvider {
+  verify(input: KycInput): Promise<KycResult>;
+}
+
+interface BindProvider {
+  bind(input: BindInput): Promise<BindResult>;
+}
+```
+
+For the POC:
+
+```text
+BavProvider → Convex mock
+KycProvider → Convex mock
+BindProvider → mock implementation
+```
+
+Later:
+
+```text
+BavProvider → Real banking provider
+KycProvider → Real KYC provider
+BindProvider → Real BIND provider
+```
+
+The Temporal Workflow does not need to change.
+
+---
+
+# 13. Complete Flow
+
+The complete onboarding lifecycle is:
+
+```text
+                    YOUR DETAILS
+                         │
+                         ▼
+                Create Opportunity
+                         │
+                         ▼
+              Start Temporal Workflow
+                         │
+                         ▼
+                       BAV
+                         │
+              Twenty signals Temporal
+                         │
+                         ▼
+                  BAV Activity
+                         │
+                         ▼
+                    Bank API
+                         │
+                         ▼
+                 BAV Result
+                         │
+                         ▼
+                  Update Twenty
+                         │
+                         ▼
+                       KYC
+                         │
+              Twenty signals Temporal
+                         │
+                         ▼
+                  KYC Activity
+                         │
+                         ▼
+                    KYC API
+                         │
+                         ▼
+                 KYC Result
+                         │
+                         ▼
+                  Update Twenty
+                         │
+                         ▼
+                     APPROVAL
+                         │
+                         ▼
+               Closed Won / Lost
+                         │
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+          Closed Lost           Closed Won
+              │                     │
+              ▼                     ▼
+          Complete             BIND Activity
+                                    │
+                                    ▼
+                                 BIND API
+                                    │
+                                    ▼
+                                 Complete
+```
+
+---
+
+# 14. Ownership
+
+| Concern | Owner |
+|---|---|
+| Company | Twenty |
+| Person | Twenty |
+| Opportunity | Twenty |
+| Current application stage | Twenty |
+| BAV/KYC status | Twenty |
+| Provider references | Twenty |
+| Workflow state | Temporal |
+| Waiting for external events | Temporal |
+| Retries | Temporal |
+| BAV API call | Temporal Activity |
+| KYC API call | Temporal Activity |
+| BIND API call | Temporal Activity |
+| Sensitive provider credentials | Server/secret manager |
+| Actual external verification | Provider |
+
+---
+
+# 15. Design Principle
+
+The most important rule is:
+
+```text
+Twenty tells us WHAT stage the application is in.
+
+Temporal determines WHAT WORK needs to happen.
+
+Activities perform the actual external work.
+```
+
+This keeps the CRM, orchestration engine, and external providers loosely coupled while allowing the onboarding process to run reliably over long periods of time.
