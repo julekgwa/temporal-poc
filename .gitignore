@@ -2,6 +2,7 @@ node_modules
 .DS_Store
 dist
 dist-ssr
+tmp
 *.local
 .env
 .nitro
@@ -11,3 +12,12 @@ dist-ssr
 .vinxi
 __unconfig*
 todos.json
+
+
+
+.nx/cache
+.nx/workspace-data
+.nx/migrate-runs
+.nx/polygraph
+.claude/worktrees
+.claude/settings.local.json

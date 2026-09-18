@@ -15,6 +15,27 @@ export default [
     },
   },
   {
-    ignores: ['eslint.config.js', 'prettier.config.js'],
+    ignores: ['eslint.config.js', 'prettier.config.js', 'tmp/**'],
+  },
+  {
+    files: ['apps/temporal-api/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        project: ['./apps/temporal-api/tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ['apps/temporal-worker/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        project: [
+          './apps/temporal-worker/tsconfig.app.json',
+          './apps/temporal-worker/tsconfig.spec.json',
+        ],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
   },
 ]

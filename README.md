@@ -614,8 +614,8 @@ interface BindProvider {
 For the POC:
 
 ```text
-BavProvider → Convex mock
-KycProvider → Convex mock
+BavProvider → in-memory mock
+KycProvider → in-memory mock
 BindProvider → mock implementation
 ```
 
